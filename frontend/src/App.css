@@ -306,7 +306,7 @@ input[type="range"] { accent-color: var(--accent); }
   color: var(--text-secondary);
 }
 .legend-item { display: flex; align-items: center; gap: 6px; }
-.swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.swatch { width: 9px; height: 9px; display: inline-block; }
 
 /* Reasoning trace */
 .trace-scroll {
