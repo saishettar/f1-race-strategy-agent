@@ -1,6 +1,6 @@
 # Live Race Strategy Agent
 
-A pit strategy assistant that replays real Formula 1 telemetry lap by lap and answers, on every lap: **should we pit now?**
+A pit strategy assistant that replays real Formula 1 telemetry lap by lap, answering on every lap whether the car should pit now.
 
 **Live demo:** [f1-race-strategy-agent.vercel.app](https://f1-race-strategy-agent.vercel.app)
 
