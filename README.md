@@ -2,6 +2,8 @@
 
 A pit strategy assistant that replays real Formula 1 telemetry lap by lap and answers, on every lap: **should we pit now?**
 
+**Live demo:** [f1-race-strategy-agent.vercel.app](https://f1-race-strategy-agent.vercel.app)
+
 Backend streams cached [OpenF1](https://openf1.org/) data over SSE at a configurable pace; a decision agent (rule-based, or a real Claude tool-use agent) reasons over tire degradation, gaps, weather, and track status; a React dashboard shows the verdict and the full reasoning trace behind it.
 
 ## Features
@@ -115,7 +117,7 @@ Render's free tier spins down after inactivity — the first request after idle 
 - [x] Accuracy scorecard against real pit stops
 - [x] Weather and rival-tire context in the reasoning trace
 - [x] Per-user Claude API keys, entered in the browser, never stored server-side
-- [ ] Deployed instance (frontend on Vercel, backend on Render — see Deployment above)
+- [x] Deployed instance (frontend on Vercel, backend on Render — see Deployment above)
 
 ## Data
 
