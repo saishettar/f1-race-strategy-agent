@@ -3,9 +3,10 @@ import json
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -15,10 +16,14 @@ from app.scorecard import compute_scorecard
 
 app = FastAPI(title="Live Race Strategy Agent")
 
-_anthropic_client = None
+# Fallback client for local dev only — set ANTHROPIC_API_KEY in backend/.env to
+# avoid re-entering a key in the browser every time. On a public deployment,
+# leave this unset: visitors supply their own key per-request instead (see
+# replay_stream below), so no one's personal key gets used by strangers.
+_dev_anthropic_client = None
 if os.environ.get("ANTHROPIC_API_KEY"):
     from anthropic import AsyncAnthropic
-    _anthropic_client = AsyncAnthropic()
+    _dev_anthropic_client = AsyncAnthropic()
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,17 +72,34 @@ def degradation(session_key: int = DEFAULT_SESSION_KEY):
     return model.summary()
 
 
-@app.get("/api/replay/stream")
+class ReplayRequest(BaseModel):
+    session_key: int = DEFAULT_SESSION_KEY
+    driver_number: int = 1
+    speed: float = 2.0
+    use_llm: bool = False
+
+
+@app.post("/api/replay/stream")
 async def replay_stream(
-    session_key: int = Query(DEFAULT_SESSION_KEY),
-    driver_number: int = Query(1),
-    speed: float = Query(2.0, gt=0, le=1000),
-    use_llm: bool = Query(False),
+    body: ReplayRequest,
+    x_anthropic_api_key: str | None = Header(default=None),
 ):
-    engine = ReplayEngine(session_key, driver_number, speed=speed, use_llm=use_llm, llm_client=_anthropic_client)
+    session_key, driver_number, speed, use_llm = (
+        body.session_key, body.driver_number, body.speed, body.use_llm,
+    )
+
+    llm_client = None
+    if use_llm:
+        if x_anthropic_api_key:
+            from anthropic import AsyncAnthropic
+            llm_client = AsyncAnthropic(api_key=x_anthropic_api_key)  # per-request, never logged or stored
+        else:
+            llm_client = _dev_anthropic_client
+
+    engine = ReplayEngine(session_key, driver_number, speed=speed, use_llm=use_llm, llm_client=llm_client)
 
     async def event_source():
-        start_payload = {"driver": engine.driver_info(), "llm_active": use_llm and _anthropic_client is not None}
+        start_payload = {"driver": engine.driver_info(), "llm_active": use_llm and llm_client is not None}
         yield f"event: session_start\ndata: {json.dumps(start_payload)}\n\n"
         try:
             async for event in engine.stream():
@@ -103,4 +125,11 @@ def scorecard(session_key: int = DEFAULT_SESSION_KEY, window: int = 2):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "sessions_cached": available_sessions(), "llm_available": _anthropic_client is not None}
+    return {
+        "status": "ok",
+        "sessions_cached": available_sessions(),
+        # Whether *this server* has a fallback key configured (local dev convenience).
+        # Does not reflect whether Claude mode works — that only needs a
+        # per-request key from the browser, which this endpoint can't see.
+        "dev_llm_key_configured": _dev_anthropic_client is not None,
+    }

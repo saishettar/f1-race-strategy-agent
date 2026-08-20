@@ -3,7 +3,8 @@ export default function Controls({
   drivers, driverNumber, onDriverChange,
   speed, onSpeedChange,
   connected, onToggle,
-  llmAvailable, useLlm, onUseLlmChange,
+  useLlm, onUseLlmChange,
+  apiKey, onApiKeyChange,
 }) {
   return (
     <div className="panel controls">
@@ -35,19 +36,42 @@ export default function Controls({
           onChange={(e) => onSpeedChange(Number(e.target.value))}
         />
       </div>
-      <label className={`llm-toggle ${!llmAvailable ? "disabled" : ""}`} title={llmAvailable ? "Route each pit decision through a real Claude tool-use agent instead of the rule-based one" : "Set ANTHROPIC_API_KEY in backend/.env to enable"}>
-        <input
-          type="checkbox"
-          checked={useLlm}
-          disabled={!llmAvailable || connected}
-          onChange={(e) => onUseLlmChange(e.target.checked)}
-        />
-        Claude reasoning{!llmAvailable ? " (no API key)" : ""}
-      </label>
+
+      <div className="control-group llm-control-group">
+        <label className="llm-toggle">
+          <input
+            type="checkbox"
+            checked={useLlm}
+            disabled={connected}
+            onChange={(e) => onUseLlmChange(e.target.checked)}
+          />
+          Claude reasoning
+        </label>
+        {useLlm && (
+          <input
+            type="password"
+            className="api-key-input"
+            placeholder="sk-ant-..."
+            value={apiKey}
+            disabled={connected}
+            onChange={(e) => onApiKeyChange(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        )}
+      </div>
 
       <button className={`btn toggle-btn ${connected ? "btn-secondary" : "btn-primary"}`} onClick={onToggle}>
         {connected ? "Stop Replay" : "Start Replay"}
       </button>
+
+      {useLlm && (
+        <p className="api-key-note">
+          Stored only in your browser (localStorage), sent directly to this app's backend per request. Never
+          logged or persisted server-side. Get a key at{" "}
+          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a>.
+        </p>
+      )}
     </div>
   );
 }

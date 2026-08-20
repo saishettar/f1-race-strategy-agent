@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
-import { fetchSessions, fetchDegradation, fetchScorecard, fetchHealth, streamUrl } from "./api";
+import { fetchSessions, fetchDegradation, fetchScorecard, streamReplay } from "./api";
 import Controls from "./components/Controls";
 import DecisionHeader from "./components/DecisionHeader";
 import GapPanel from "./components/GapPanel";
@@ -8,6 +8,8 @@ import DegradationChart from "./components/DegradationChart";
 import ReasoningTrace from "./components/ReasoningTrace";
 import LapHistory from "./components/LapHistory";
 import Scorecard from "./components/Scorecard";
+
+const API_KEY_STORAGE_KEY = "f1-strategy-agent:anthropic-api-key";
 
 export default function App() {
   const [sessions, setSessions] = useState([]);
@@ -19,14 +21,13 @@ export default function App() {
   const [curves, setCurves] = useState({});
   const [scorecard, setScorecard] = useState(null);
   const [error, setError] = useState(null);
-  const [llmAvailable, setLlmAvailable] = useState(false);
   const [useLlm, setUseLlm] = useState(false);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE_KEY) || "");
   const [selectedLap, setSelectedLap] = useState(null);
 
-  const esRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
-    fetchHealth().then((h) => setLlmAvailable(h.llm_available)).catch(() => {});
     fetchSessions()
       .then((data) => {
         setSessions(data);
@@ -46,36 +47,51 @@ export default function App() {
   }, [sessionKey]);
 
   useEffect(() => {
-    return () => esRef.current?.close();
+    return () => abortRef.current?.abort();
   }, []);
+
+  function updateApiKey(key) {
+    setApiKey(key);
+    if (key) localStorage.setItem(API_KEY_STORAGE_KEY, key);
+    else localStorage.removeItem(API_KEY_STORAGE_KEY);
+  }
 
   function startReplay() {
     if (sessionKey == null || driverNumber == null) return;
-    esRef.current?.close();
+    if (useLlm && !apiKey) {
+      setError("Enter your Anthropic API key to use Claude reasoning, or turn it off.");
+      return;
+    }
+
+    abortRef.current?.abort();
     setEvents([]);
     setSelectedLap(null);
     setError(null);
 
-    const es = new EventSource(streamUrl(sessionKey, driverNumber, speed, useLlm));
-    es.addEventListener("lap_update", (e) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, data]);
-    });
-    es.addEventListener("session_end", () => {
-      setConnected(false);
-      es.close();
-    });
-    es.onerror = () => {
-      setError("Stream disconnected.");
-      setConnected(false);
-      es.close();
-    };
-    esRef.current = es;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setConnected(true);
+
+    streamReplay(
+      { sessionKey, driverNumber, speed, useLlm, apiKey },
+      (eventType, data) => {
+        if (eventType === "lap_update") {
+          setEvents((prev) => [...prev, data]);
+        } else if (eventType === "session_end") {
+          setConnected(false);
+        }
+      },
+      controller.signal
+    )
+      .catch((e) => {
+        if (e.name === "AbortError") return;
+        setError(`Stream disconnected: ${e.message}`);
+      })
+      .finally(() => setConnected(false));
   }
 
   function stopReplay() {
-    esRef.current?.close();
+    abortRef.current?.abort();
     setConnected(false);
   }
 
@@ -121,9 +137,10 @@ export default function App() {
         onSpeedChange={setSpeed}
         connected={connected}
         onToggle={toggle}
-        llmAvailable={llmAvailable}
         useLlm={useLlm}
         onUseLlmChange={setUseLlm}
+        apiKey={apiKey}
+        onApiKeyChange={updateApiKey}
       />
 
       {error && <div className="error-banner">{error}</div>}

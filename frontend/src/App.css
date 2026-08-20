@@ -134,6 +134,7 @@ select, input[type="range"] {
 select:focus, input:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
 input[type="range"] { accent-color: var(--accent); }
 
+.llm-control-group { min-width: 200px; }
 .llm-toggle {
   display: flex;
   align-items: center;
@@ -141,11 +142,18 @@ input[type="range"] { accent-color: var(--accent); }
   font-size: 0.82rem;
   color: var(--text-secondary);
   cursor: pointer;
-  padding-bottom: 10px;
+  height: 36px;
 }
-.llm-toggle.disabled { color: var(--text-muted); cursor: not-allowed; }
 .llm-toggle input { cursor: pointer; accent-color: var(--accent); }
-.llm-toggle.disabled input { cursor: not-allowed; }
+.api-key-input { margin-top: 6px; width: 100%; font-family: monospace; }
+.api-key-note {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.api-key-note a { color: var(--accent); }
 
 .llm-active-banner {
   background: var(--accent-bg);
