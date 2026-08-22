@@ -85,6 +85,16 @@ cp .env.example .env
 
 This fallback is only used when a request doesn't carry its own key — **don't set it on a public deployment**, or every visitor's Claude usage bills to that one key. With Claude mode on, replay pace is set by model latency rather than the speed slider, and each lap costs a small number of tokens. The scorecard always uses the rule-based agent, since it evaluates every driver's full race on load.
 
+### CI regression check
+
+`.github/workflows/eval.yml` runs `backend/eval/suite.yaml` (an
+[iris-eval](https://github.com/saishettar/iris/tree/main/eval) suite
+covering `decide_llm`, against real cached session data in `backend/data/`)
+on every PR touching `backend/app/**`, and posts pass/fail per test case as
+a PR comment. Needs an `ANTHROPIC_API_KEY` repo secret (Settings > Secrets
+and variables > Actions) to run for real -- without it, the workflow fails
+with an auth error rather than skipping silently.
+
 ## Deployment
 
 The repo includes `render.yaml` for the backend. Both steps are done through each provider's own dashboard — deploying isn't something that can be scripted end-to-end without your account credentials.

@@ -6,3 +6,4 @@ numpy==1.26.4
 anthropic==0.125.0
 python-dotenv==1.0.1
 -e ../../iris/sdk
+-e ../../iris/eval

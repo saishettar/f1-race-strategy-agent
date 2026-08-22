@@ -1,0 +1,77 @@
+# Regression gate for decide_llm: runs backend/eval/suite.yaml (see
+# iris-eval, https://github.com/saishettar/iris/tree/main/eval) against
+# every PR touching the agent code or the suite itself, and posts the
+# results as a PR comment. Requires an ANTHROPIC_API_KEY repo secret
+# (Settings > Secrets and variables > Actions) -- without it, the eval step
+# fails with a clear auth error rather than silently skipping.
+name: Eval regression check
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/**"
+      - "backend/eval/**"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out undercut
+        uses: actions/checkout@v4
+
+      - name: Check out iris (sibling checkout, matches local dev layout)
+        uses: actions/checkout@v4
+        with:
+          repository: saishettar/iris
+          path: ../iris
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run eval suite
+        id: eval
+        working-directory: backend
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        continue-on-error: true
+        run: |
+          iris-eval eval/suite.yaml --out eval/results.json \
+            --version-tag "pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+
+      - name: Post results as a PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body;
+            try {
+              const results = JSON.parse(fs.readFileSync('backend/eval/results.json', 'utf8'));
+              const passed = results.results.filter(r => r.passed).length;
+              const lines = results.results.map(r => {
+                const status = r.passed ? 'PASS' : 'FAIL';
+                return `- [${status}] **${r.description}** (${r.latency_ms.toFixed(0)}ms)`;
+              });
+              body = [
+                `### Eval results: ${passed}/${results.results.length} passed`,
+                '',
+                ...lines,
+              ].join('\n');
+            } catch (e) {
+              body = '### Eval run failed to produce results\n\nCheck the workflow log for details.';
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Fail the check if the eval run failed
+        if: steps.eval.outcome == 'failure'
+        run: exit 1
