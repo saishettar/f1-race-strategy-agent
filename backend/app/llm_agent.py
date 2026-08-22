@@ -13,6 +13,9 @@ box for anyone cloning the repo without Anthropic credentials.
 import json
 import os
 
+from iris_otel import observe, trace_llm_call
+from iris_otel.presets import anthropic_finish_reason, anthropic_usage
+
 from app.agent import LapContext, PitDecision, decide as decide_rule_based
 from app.degradation import DegradationModel
 
@@ -119,55 +122,65 @@ def _fallback(ctx: LapContext, model: DegradationModel, reason: str) -> PitDecis
     return decision
 
 
+@trace_llm_call(model=MODEL, extract_usage=anthropic_usage, extract_finish_reasons=anthropic_finish_reason)
+async def _call_claude(client, **kwargs):
+    return await client.messages.create(**kwargs)
+
+
 async def decide_llm(ctx: LapContext, model: DegradationModel, client) -> PitDecision:
     if client is None:
         return _fallback(ctx, model, "no ANTHROPIC_API_KEY configured")
 
-    system = (
-        "You are a Formula 1 race strategist making a live pit call for your own car. "
-        f"It is lap {ctx.lap_number}. Your car is on {ctx.compound} tires, {ctx.tire_age} "
-        "laps old. Use the available tools to check tire degradation, gaps to rivals, "
-        "weather, and track status before deciding — don't guess at numbers you can look "
-        "up. When you've gathered what you need, call submit_decision exactly once with "
-        "your verdict and a short step-by-step reasoning trail in race-engineer radio style."
-    )
-    messages = [{"role": "user", "content": "What's the call — pit this lap, or stay out?"}]
+    with observe("invoke_agent", **{"gen_ai.agent.name": "f1-pit-strategy"}):
+        system = (
+            "You are a Formula 1 race strategist making a live pit call for your own car. "
+            f"It is lap {ctx.lap_number}. Your car is on {ctx.compound} tires, {ctx.tire_age} "
+            "laps old. Use the available tools to check tire degradation, gaps to rivals, "
+            "weather, and track status before deciding — don't guess at numbers you can look "
+            "up. When you've gathered what you need, call submit_decision exactly once with "
+            "your verdict and a short step-by-step reasoning trail in race-engineer radio style."
+        )
+        messages = [{"role": "user", "content": "What's the call — pit this lap, or stay out?"}]
 
-    try:
-        for _ in range(MAX_TOOL_ROUNDS):
-            response = await client.messages.create(
-                model=MODEL,
-                max_tokens=1024,
-                system=system,
-                tools=TOOLS,
-                messages=messages,
-            )
-
-            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
-            if not tool_use_blocks:
-                return _fallback(ctx, model, "model didn't call submit_decision")
-
-            submit = next((b for b in tool_use_blocks if b.name == "submit_decision"), None)
-            if submit is not None:
-                action = submit.input.get("action", "STAY OUT")
-                reasoning = submit.input.get("reasoning", [])
-                return PitDecision(
-                    action=action,
-                    reasoning=list(reasoning),
-                    falloff_rate=model.falloff_rate(ctx.compound),
+        try:
+            for _ in range(MAX_TOOL_ROUNDS):
+                response = await _call_claude(
+                    client,
+                    model=MODEL,
+                    max_tokens=1024,
+                    system=system,
+                    tools=TOOLS,
+                    messages=messages,
                 )
 
-            messages.append({"role": "assistant", "content": response.content})
-            tool_results = [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": json.dumps(_execute_tool(block.name, ctx, model)),
-                }
-                for block in tool_use_blocks
-            ]
-            messages.append({"role": "user", "content": tool_results})
+                tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+                if not tool_use_blocks:
+                    return _fallback(ctx, model, "model didn't call submit_decision")
 
-        return _fallback(ctx, model, "exceeded max tool-call rounds without a decision")
-    except Exception as e:
-        return _fallback(ctx, model, f"API error ({type(e).__name__})")
+                submit = next((b for b in tool_use_blocks if b.name == "submit_decision"), None)
+                if submit is not None:
+                    action = submit.input.get("action", "STAY OUT")
+                    reasoning = submit.input.get("reasoning", [])
+                    return PitDecision(
+                        action=action,
+                        reasoning=list(reasoning),
+                        falloff_rate=model.falloff_rate(ctx.compound),
+                    )
+
+                messages.append({"role": "assistant", "content": response.content})
+                tool_results = []
+                for block in tool_use_blocks:
+                    with observe("execute_tool", **{"gen_ai.tool.name": block.name}):
+                        tool_output = _execute_tool(block.name, ctx, model)
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(tool_output),
+                        }
+                    )
+                messages.append({"role": "user", "content": tool_results})
+
+            return _fallback(ctx, model, "exceeded max tool-call rounds without a decision")
+        except Exception as e:
+            return _fallback(ctx, model, f"API error ({type(e).__name__})")
